@@ -21,7 +21,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "App.hpp"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,6 +44,43 @@ COM_InitTypeDef BspCOMInit;
 
 /* USER CODE BEGIN PV */
 
+/* Un pin = puerto + numero (los nombres vienen de las etiquetas puestas en el .ioc) */
+typedef struct
+{
+  GPIO_TypeDef *puerto;
+  uint16_t      pin;
+} Pin;
+
+/* Colores: tambien son la posicion de cada luz dentro de luces[s][] */
+enum { ROJO = 0, AMARILLO = 1, VERDE = 2 };
+
+/* luces[semaforo][color]: semaforo 0 = S1 ... semaforo 3 = S4 */
+static const Pin luces[4][3] =
+{
+  { {S1_R_GPIO_Port, S1_R_Pin}, {S1_A_GPIO_Port, S1_A_Pin}, {S1_V_GPIO_Port, S1_V_Pin} },
+  { {S2_R_GPIO_Port, S2_R_Pin}, {S2_A_GPIO_Port, S2_A_Pin}, {S2_V_GPIO_Port, S2_V_Pin} },
+  { {S3_R_GPIO_Port, S3_R_Pin}, {S3_A_GPIO_Port, S3_A_Pin}, {S3_V_GPIO_Port, S3_V_Pin} },
+  { {S4_R_GPIO_Port, S4_R_Pin}, {S4_A_GPIO_Port, S4_A_Pin}, {S4_V_GPIO_Port, S4_V_Pin} },
+};
+
+/* Segmentos a..g del display (catodo comun: SET = encendido), va en el semaforo S1 */
+static const Pin segmentos[7] =
+{
+  {DISP_A_GPIO_Port, DISP_A_Pin},       {DISP_B_GPIO_Port, DISP_B_Pin},
+  {DISP_C_GPIO_Port, DISP_C_Pin},       {DISP_D_GPIO_Port, DISP_D_Pin},
+  {DISP_E_GPIO_Port, DISP_E_Pin},       {DISP_FB11_GPIO_Port, DISP_FB11_Pin},
+  {DISP_GB10_GPIO_Port, DISP_GB10_Pin},
+};
+
+/* Que segmentos se encienden para cada numero (bit 0 = a ... bit 6 = g) */
+static const uint8_t numeros[10] =
+{
+  0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F
+};
+
+#define TIEMPO_VERDE_MS     5000
+#define TIEMPO_AMARILLO_MS  2000
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -52,7 +88,10 @@ void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
-
+static void PonerColor(int semaforo, int color);
+static void TodosEnRojoMenos(int semaforo);
+static void MostrarNumero(int numero);
+static void ApagarDisplay(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -114,10 +153,7 @@ int main(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN 2 */
-  AppRun();
-  /* USER CODE END 2 */
-  
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -126,6 +162,35 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    /* Una vuelta: cada semaforo tiene su verde y su amarillo, uno detras de otro */
+    for (int s = 0; s < 4; s++)
+    {
+      /* Verde */
+      TodosEnRojoMenos(s);
+      PonerColor(s, VERDE);
+      if (s == 3)
+      {
+        /* Mientras S4 esta en verde, el display de S1 cuenta 9..1 (1 segundo cada numero) */
+        for (int n = 9; n > 0; n--)
+        {
+          MostrarNumero(n);
+          HAL_Delay(1000);
+        }
+        ApagarDisplay();
+      }
+      else
+      {
+        HAL_Delay(TIEMPO_VERDE_MS);
+      }
+
+      /* Amarillo */
+      PonerColor(s, AMARILLO);
+      if (s == 3)
+      {
+        PonerColor(0, AMARILLO);   /* S1 tambien en amarillo: "preparate" */
+      }
+      HAL_Delay(TIEMPO_AMARILLO_MS);
+    }
   }
   /* USER CODE END 3 */
 }
@@ -276,6 +341,46 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/* Enciende solo la luz 'color' del semaforo y apaga las otras dos */
+static void PonerColor(int semaforo, int color)
+{
+  for (int c = 0; c < 3; c++)
+  {
+    HAL_GPIO_WritePin(luces[semaforo][c].puerto, luces[semaforo][c].pin,
+                      (c == color) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+  }
+}
+
+/* Pone en rojo todos los semaforos excepto el indicado */
+static void TodosEnRojoMenos(int semaforo)
+{
+  for (int s = 0; s < 4; s++)
+  {
+    if (s != semaforo)
+    {
+      PonerColor(s, ROJO);
+    }
+  }
+}
+
+/* Dibuja un numero de 0 a 9 en el display */
+static void MostrarNumero(int numero)
+{
+  for (int i = 0; i < 7; i++)
+  {
+    HAL_GPIO_WritePin(segmentos[i].puerto, segmentos[i].pin,
+                      ((numeros[numero] >> i) & 1) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+  }
+}
+
+static void ApagarDisplay(void)
+{
+  for (int i = 0; i < 7; i++)
+  {
+    HAL_GPIO_WritePin(segmentos[i].puerto, segmentos[i].pin, GPIO_PIN_RESET);
+  }
+}
 
 /* USER CODE END 4 */
 
